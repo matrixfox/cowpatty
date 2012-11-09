@@ -11,3 +11,4 @@
 
 %:
 	dh $@ 
+override_dh_auto_clean:
