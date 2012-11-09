@@ -12,3 +12,4 @@
 %:
 	dh $@ 
 override_dh_auto_clean:
+override_dh_usrlocal:
