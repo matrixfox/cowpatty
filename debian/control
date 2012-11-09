@@ -2,7 +2,7 @@ Source: cowpatty
 Section: net
 Priority: extra
 Maintainer: dookie <dookie@kali.org>
-Build-Depends: debhelper (>= 8.0.0), libssl-dev
+Build-Depends: debhelper (>= 8.0.0), libssl-dev, libpcap-dev
 Standards-Version: 3.9.3
 Homepage: http://www.willhackforsushi.com/Cowpatty.html
 Vcs-Git: ssh://git@git.kali.org/packages/cowpatty.git
@@ -10,7 +10,7 @@ Vcs-Browser: http://git.kali.org/gitweb/?p=packages/cowpatty.git;a=summary
 
 Package: cowpatty
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, libssl1.0.0
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, libssl1.0.0, libpcap0.8
 Description: Brute-force WPA dictionary attack
  If you are auditing WPA-PSK or WPA2-PSK networks, you can use
  this tool to identify weak passphrases that were used to generate the
