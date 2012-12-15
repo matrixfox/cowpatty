@@ -1,5 +1,3 @@
 cowpatty usr/bin/
 genpmk usr/bin/
-debian/kali-cowpatty.desktop usr/share/applications/
-debian/kali-genpmk.desktop usr/share/applications/
 

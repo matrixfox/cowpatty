@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=cowpatty
-Encoding=UTF-8
-Exec=sh -c "cowpatty;sudo -s"
-Icon=kali-menu.png
-StartupNotify=false
-Terminal=true
-Type=Application
-Categories=05-02-02-wlan-exploitation;
