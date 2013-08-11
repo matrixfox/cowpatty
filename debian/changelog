@@ -1,3 +1,9 @@
+cowpatty (4.6-1kali1) kali; urgency=low
+
+  * Added cowpatty-4.6-fixup16-patch
+
+ -- Mati Aharoni <muts@kali.org>  Sun, 11 Aug 2013 18:12:48 -0400
+
 cowpatty (4.6-1kali0) kali; urgency=low
 
   * Upstream import
