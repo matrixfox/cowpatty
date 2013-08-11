@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004-2005, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: sha1.c,v 4.2 2008/03/20 16:49:38 jwright Exp $
+ * $Id: sha1.c,v 4.2 2008-03-20 16:49:38 jwright Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as

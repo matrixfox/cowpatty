@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004-2005, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: utils.h,v 4.1 2007/11/03 20:28:39 jwright Exp $
+ * $Id: utils.h,v 4.1 2007-11-03 20:28:39 jwright Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as

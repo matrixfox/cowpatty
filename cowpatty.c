@@ -1,9 +1,9 @@
 /*
  * coWPAtty - Brute-force dictionary attack against WPA-PSK.
  *
- * Copyright (c) 2004-2005, Joshua Wright <jwright@hasborg.com>
+ * Copyright (c) 2004-2009, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: cowpatty.c,v 4.4 2008/03/20 16:49:38 jwright Exp $
+ * $Id: cowpatty.c 264 2009-07-03 15:15:50Z jwright $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -31,7 +31,7 @@
  */
 
 #define PROGNAME "cowpatty"
-#define VER "4.3"
+#define VER "4.6"
 #define MAXPASSPHRASE 256
 #define DOT1X_LLCTYPE "\x88\x8e"
 
@@ -59,7 +59,9 @@ struct pcap_pkthdr *h;
 char errbuf[PCAP_ERRBUF_SIZE];
 int sig = 0;			/* Used for handling signals */
 char *words;
-char password_buf[33];
+/* temporary storage for the password from the hash record, instead of
+   malloc/free for each entry. */
+char password_buf[65];
 unsigned long wordstested = 0;
 
 /* Prototypes */
@@ -71,8 +73,9 @@ void testopts(struct user_opt *opt);
 void cleanup();
 void parseopts(struct user_opt *opt, int argc, char **argv);
 void closepcap(struct capture_data *capdata);
-void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata);
-void dump_all_fields(struct crack_data cdata);
+void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata,
+		  struct user_opt *opt);
+void dump_all_fields(struct crack_data cdata, struct user_opt *opt);
 void printstats(struct timeval start, struct timeval end,
 		unsigned long int wordcount);
 int nextdictword(char *word, FILE * fp);
@@ -91,6 +94,8 @@ void usage(char *message)
 	       "\t-d \tHash file (genpmk)\n"
 	       "\t-r \tPacket capture file\n"
 	       "\t-s \tNetwork SSID (enclose in quotes if SSID includes spaces)\n"
+	       "\t-2 \tUse frames 1 and 2 or 2 and 3 for key attack (nonstrict mode)\n"
+           "\t-c \tCheck for valid 4-way frames, does not crack\n"
 	       "\t-h \tPrint this help information and exit\n"
 	       "\t-v \tPrint verbose information (more -v for more verbosity)\n"
 	       "\t-V \tPrint program version and exit\n" "\n");
@@ -146,7 +151,7 @@ void parseopts(struct user_opt *opt, int argc, char **argv)
 
 	int c;
 
-	while ((c = getopt(argc, argv, "f:r:s:d:hvV")) != EOF) {
+	while ((c = getopt(argc, argv, "f:r:s:d:c2nhvV")) != EOF) {
 		switch (c) {
 		case 'f':
 			strncpy(opt->dictfile, optarg, sizeof(opt->dictfile));
@@ -160,6 +165,13 @@ void parseopts(struct user_opt *opt, int argc, char **argv)
 		case 'd':
 			strncpy(opt->hashfile, optarg, sizeof(opt->hashfile));
 			break;
+		case 'n':
+		case '2':
+			opt->nonstrict++;
+			break;
+		case 'c':
+			opt->checkonly++;
+			break;
 		case 'h':
 			usage("");
 			exit(0);
@@ -169,7 +181,7 @@ void parseopts(struct user_opt *opt, int argc, char **argv)
 			break;
 		case 'V':
 			printf
-			    ("$Id: cowpatty.c,v 4.4 2008/03/20 16:49:38 jwright Exp $\n");
+				("$Id: cowpatty.c 264 2009-07-03 15:15:50Z jwright $\n");
 			exit(0);
 			break;
 		default:
@@ -182,6 +194,17 @@ void parseopts(struct user_opt *opt, int argc, char **argv)
 void testopts(struct user_opt *opt)
 {
 	struct stat teststat;
+
+    /* Test for a pcap file */
+	if (IsBlank(opt->pcapfile)) {
+		usage("Must supply a pcap file with -r");
+		exit(-1);
+	}
+
+    if (opt->checkonly == 1) {
+        /* Special case where we only need pcap file */
+        return;
+    }
 
 	/* test for required parameters */
 	if (IsBlank(opt->dictfile) && IsBlank(opt->hashfile)) {
@@ -196,13 +219,8 @@ void testopts(struct user_opt *opt)
 		exit(-1);
 	}
 
-	if (IsBlank(opt->pcapfile)) {
-		usage("Must supply a pcap file with -r");
-		exit(-1);
-	}
-
 	/* Test that the files specified exist and are greater than 0 bytes */
-	if (!IsBlank(opt->hashfile)) {
+	if (!IsBlank(opt->hashfile) && strncmp(opt->hashfile, "-", 1) != 0) {
 		if (stat(opt->hashfile, &teststat)) {
 			usage("Could not stat hashfile.  Check file path.");
 			exit(-1);
@@ -224,7 +242,7 @@ void testopts(struct user_opt *opt)
 		}
 	}
 
-	if (stat(opt->pcapfile, &teststat)) {
+	if (stat(opt->pcapfile, &teststat) && strncmp(opt->hashfile, "-", 1) != 0) {
 		usage("Could not stat the pcap file.  Check file path.");
 		exit(-1);
 	} else if (teststat.st_size == 0) {
@@ -365,6 +383,7 @@ int getpacket(struct capture_data *capdata)
 			capdata->dstmac_offset = 4 + rtaphdrlen;
 			capdata->srcmac_offset = 10 + rtaphdrlen;
 
+			dot11 = ((struct dot11hdr *)(packet+rtaphdrlen));
 			/* differentiate QoS data and non-QoS data frames */
 			if (dot11->u1.fc.subtype == DOT11_FC_SUBTYPE_QOSDATA) {
 				capdata->dot1x_offset = 34 + rtaphdrlen;
@@ -389,7 +408,8 @@ int getpacket(struct capture_data *capdata)
 	return (ret);
 }
 
-void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata)
+void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata,
+		  struct user_opt *opt)
 {
 	struct ieee8021x *dot1xhdr;
 	struct wpa_eapol_key *eapolkeyhdr;
@@ -415,11 +435,21 @@ void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata)
 	cdata->ver = key_info & WPA_KEY_INFO_TYPE_MASK;
 	index = key_info & WPA_KEY_INFO_KEY_INDEX_MASK;
 
-	/* Check for EAPOL version 1, type EAPOL-Key */
-	if (dot1xhdr->version != 1 || dot1xhdr->type != 3) {
-		return;
-	}
+	if (opt->nonstrict == 0) {
 
+	        /* Check for EAPOL version 1, type EAPOL-Key */
+        	if (dot1xhdr->version != 1 || dot1xhdr->type != 3) {
+                	return;
+        	}
+
+	} else {
+
+		/* Check for type EAPOL-Key */
+		if (dot1xhdr->type != 3) {
+			return;
+		}
+
+	}
 	if (cdata->ver != WPA_KEY_INFO_TYPE_HMAC_MD5_RC4 &&
 		cdata->ver != WPA_KEY_INFO_TYPE_HMAC_SHA1_AES) {
 		return;
@@ -438,52 +468,106 @@ void handle_dot1x(struct crack_data *cdata, struct capture_data *capdata)
 		}
 	}
 
-	/* Check for frame 2 of the 4-way handshake */
-	if ((key_info & WPA_KEY_INFO_MIC) && (key_info & WPA_KEY_INFO_ACK) == 0
-	    && (key_info & WPA_KEY_INFO_INSTALL) == 0
-	    && eapolkeyhdr->key_data_length > 0) {
-		/* All we need from this frame is the authenticator nonce */
-		memcpy(cdata->snonce, eapolkeyhdr->key_nonce,
-		       sizeof(cdata->snonce));
-		cdata->snonceset = 1;
+	if (opt->nonstrict == 0) {
 
-	} else if (		/* Check for frame 3 of the 4-way handshake */
-			  (key_info & WPA_KEY_INFO_MIC)
+		/* Check for frame 2 of the 4-way handshake */
+		if ((key_info & WPA_KEY_INFO_MIC)
+			&& (key_info & WPA_KEY_INFO_ACK) == 0
+			&& (key_info & WPA_KEY_INFO_INSTALL) == 0
+			&& eapolkeyhdr->key_data_length > 0) {
+
+			/* All we need from this frame is the authenticator nonce */
+			memcpy(cdata->snonce, eapolkeyhdr->key_nonce,
+			       sizeof(cdata->snonce));
+			cdata->snonceset = 1;
+
+		/* Check for frame 3 of the 4-way handshake */
+		} else if ((key_info & WPA_KEY_INFO_MIC)
 			  && (key_info & WPA_KEY_INFO_INSTALL)
 			  && (key_info & WPA_KEY_INFO_ACK)) {
 
-		memcpy(cdata->spa, &packet[capdata->dstmac_offset],
-		       sizeof(cdata->spa));
-		memcpy(cdata->aa, &packet[capdata->srcmac_offset],
-		       sizeof(cdata->aa));
-		memcpy(cdata->anonce, eapolkeyhdr->key_nonce,
-		       sizeof(cdata->anonce));
-		cdata->aaset = 1;
-		cdata->spaset = 1;
-		cdata->anonceset = 1;
-		/* We save the replay counter value in the 3rd frame to match
-		   against the 4th frame of the four-way handshake */
-		memcpy(cdata->replay_counter, eapolkeyhdr->replay_counter, 8);
+			memcpy(cdata->spa, &packet[capdata->dstmac_offset],
+			       sizeof(cdata->spa));
+			memcpy(cdata->aa, &packet[capdata->srcmac_offset],
+			       sizeof(cdata->aa));
+			memcpy(cdata->anonce, eapolkeyhdr->key_nonce,
+			       sizeof(cdata->anonce));
+			cdata->aaset = 1;
+			cdata->spaset = 1;
+			cdata->anonceset = 1;
+			/* We save the replay counter value in the 3rd frame to match
+			   against the 4th frame of the four-way handshake */
+			memcpy(cdata->replay_counter,
+			       eapolkeyhdr->replay_counter, 8);
 
-	} else if (		/* Check for frame 4 of the four-way handshake */
-			  (key_info & WPA_KEY_INFO_MIC)
+		/* Check for frame 4 of the four-way handshake */
+		} else if ((key_info & WPA_KEY_INFO_MIC)
 			  && (key_info & WPA_KEY_INFO_ACK) == 0
 			  && (key_info & WPA_KEY_INFO_INSTALL) == 0
-			  &&
-			  (memcmp
-			   (cdata->replay_counter, eapolkeyhdr->replay_counter,
-			    8) == 0)) {
+			  && (memcmp (cdata->replay_counter,
+			      eapolkeyhdr->replay_counter, 8) == 0)) {
 
-		memcpy(cdata->keymic, eapolkeyhdr->key_mic,
-		       sizeof(cdata->keymic));
-		memcpy(cdata->eapolframe, &packet[capdata->dot1x_offset],
-		       sizeof(cdata->eapolframe));
-		cdata->keymicset = 1;
-		cdata->eapolframeset = 1;
+			memcpy(cdata->keymic, eapolkeyhdr->key_mic,
+			       sizeof(cdata->keymic));
+			memcpy(cdata->eapolframe, &packet[capdata->dot1x_offset],
+			       sizeof(cdata->eapolframe));
+			cdata->keymicset = 1;
+			cdata->eapolframeset = 1;
+		}
+	} else {
+
+		/* Check for frame 1 of the 4-way handshake */
+		if ((key_info & WPA_KEY_INFO_MIC) == 0 
+		   && (key_info & WPA_KEY_INFO_ACK)
+		   && (key_info & WPA_KEY_INFO_INSTALL) == 0 ) {
+	                /* All we need from this frame is the authenticator nonce */
+			memcpy(cdata->anonce, eapolkeyhdr->key_nonce,
+				sizeof(cdata->anonce));
+			cdata->anonceset = 1;
+ 
+		/* Check for frame 2 of the 4-way handshake */
+		} else if ((key_info & WPA_KEY_INFO_MIC)
+			  && (key_info & WPA_KEY_INFO_INSTALL) == 0
+			  && (key_info & WPA_KEY_INFO_ACK) == 0
+			  && eapolkeyhdr->key_data_length > 0) {
+
+			cdata->eapolframe_size = ( packet[capdata->dot1x_offset + 2] << 8 )
+					+   packet[capdata->dot1x_offset + 3] + 4;
+
+			memcpy(cdata->spa, &packet[capdata->dstmac_offset],
+				sizeof(cdata->spa));
+			cdata->spaset = 1;
+
+			memcpy(cdata->aa, &packet[capdata->srcmac_offset],
+				sizeof(cdata->aa));
+			cdata->aaset = 1;
+
+			memcpy(cdata->snonce, eapolkeyhdr->key_nonce,
+				 sizeof(cdata->snonce));
+			cdata->snonceset = 1;
+
+			memcpy(cdata->keymic, eapolkeyhdr->key_mic,
+				sizeof(cdata->keymic));
+			cdata->keymicset = 1;
+
+			memcpy(cdata->eapolframe, &packet[capdata->dot1x_offset],
+				cdata->eapolframe_size);
+			cdata->eapolframeset = 1;
+
+
+        /* Check for frame 3 of the 4-way handshake */
+		}  else if ((key_info & WPA_KEY_INFO_MIC)
+			  	&& (key_info & WPA_KEY_INFO_ACK)
+	   			&& (key_info & WPA_KEY_INFO_INSTALL)) {
+			/* All we need from this frame is the authenticator nonce */
+			memcpy(cdata->anonce, eapolkeyhdr->key_nonce,
+			sizeof(cdata->anonce));
+			cdata->anonceset = 1;
+		}
 	}
 }
 
-void dump_all_fields(struct crack_data cdata)
+void dump_all_fields(struct crack_data cdata, struct user_opt *opt)
 {
 
 	printf("AA is:");
@@ -507,8 +591,12 @@ void dump_all_fields(struct crack_data cdata)
 	printf("\n");
 
 	printf("eapolframe is:");
-	lamont_hdump(cdata.eapolframe, 99);	/* Bug in lamont_hdump makes this look
-						   wrong, only shows 98 bytes */
+	if (opt->nonstrict == 0) {
+		lamont_hdump(cdata.eapolframe, 99);
+	} else {
+		lamont_hdump(cdata.eapolframe, 125);
+	}
+
 	printf("\n");
 
 }
@@ -705,8 +793,13 @@ int hashfile_attack(struct user_opt *opt, char *passphrase,
 			       "frame.\n");
 		}
 
-		hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
-			 sizeof(cdata->eapolframe), keymic);
+		if (opt->nonstrict == 0) {
+			hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
+				sizeof(cdata->eapolframe), keymic);
+		} else {
+			hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
+			 cdata->eapolframe_size, keymic);
+		}
 
 		if (opt->verbose > 2) {
 			printf("Calculated MIC with \"%s\" is", passphrase);
@@ -766,8 +859,8 @@ int dictfile_attack(struct user_opt *opt, char *passphrase,
 		 */
 		if (fret < 8 || fret > 63) {
 			if (opt->verbose) {
-				printf("Invalid passphrase length: %s (%d).\n",
-				       passphrase, (int)strlen(passphrase));
+				printf("Invalid passphrase length: %s (%u).\n",
+				       passphrase, strlen(passphrase));
 			}
 			continue;
 		} else {
@@ -814,8 +907,13 @@ int dictfile_attack(struct user_opt *opt, char *passphrase,
 			       "frame.\n");
 		}
 
-		hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
-			 sizeof(cdata->eapolframe), keymic);
+		if (opt->nonstrict == 0) {
+			hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
+				sizeof(cdata->eapolframe), keymic);
+		} else {
+			hmac_hash(cdata->ver, ptkset->mic_key, 16, cdata->eapolframe,
+				cdata->eapolframe_size, keymic);
+                }
 
 		if (opt->verbose > 2) {
 			printf("Calculated MIC with \"%s\" is", passphrase);
@@ -832,84 +930,91 @@ int dictfile_attack(struct user_opt *opt, char *passphrase,
 	return 1;
 }
 
-int main(int argc, char **argv)
-{
-	struct user_opt opt;
-	struct crack_data cdata;
-	struct capture_data capdata;
-	struct wpa_eapol_key *eapkeypacket;
-	u8 eapolkey_nomic[99];
-	struct timeval start, end;
-	int ret;
-	char passphrase[MAXPASSLEN + 1];
+    int main(int argc, char **argv)
+    {
+        struct user_opt opt;
+        struct crack_data cdata;
+        struct capture_data capdata;
+        struct wpa_eapol_key *eapkeypacket;
+        u8 eapolkey_nomic[99];
+        struct timeval start, end;
+        int ret;
+        char passphrase[MAXPASSLEN + 1];
 
-	printf("%s %s - WPA-PSK dictionary attack. <jwright@hasborg.com>\n",
-	       PROGNAME, VER);
+        printf("%s %s - WPA-PSK dictionary attack. <jwright@hasborg.com>\n",
+               PROGNAME, VER);
 
-	memset(&opt, 0, sizeof(struct user_opt));
-	memset(&capdata, 0, sizeof(struct capture_data));
-	memset(&cdata, 0, sizeof(struct crack_data));
-	memset(&eapolkey_nomic, 0, sizeof(eapolkey_nomic));
+        memset(&opt, 0, sizeof(struct user_opt));
+        memset(&capdata, 0, sizeof(struct capture_data));
+        memset(&cdata, 0, sizeof(struct crack_data));
+        memset(&eapolkey_nomic, 0, sizeof(eapolkey_nomic));
 
-	/* Collect and test command-line arguments */
-	parseopts(&opt, argc, argv);
-	testopts(&opt);
-	printf("\n");
+        /* Collect and test command-line arguments */
+        parseopts(&opt, argc, argv);
+        testopts(&opt);
+        printf("\n");
 
-	/* Populate capdata struct */
-	strncpy(capdata.pcapfilename, opt.pcapfile,
-		sizeof(capdata.pcapfilename));
-	if (openpcap(&capdata) != 0) {
-		printf("Unsupported or unrecognized pcap file.\n");
-		exit(-1);
-	}
+        /* Populate capdata struct */
+        strncpy(capdata.pcapfilename, opt.pcapfile,
+            sizeof(capdata.pcapfilename));
+        if (openpcap(&capdata) != 0) {
+            printf("Unsupported or unrecognized pcap file.\n");
+            exit(-1);
+        }
 
-	/* populates global *packet */
-	while (getpacket(&capdata) > 0) {
-		if (opt.verbose > 2) {
-			lamont_hdump(packet, h->len);
-		}
-		/* test packet for data that we are looking for */
-		if (memcmp(&packet[capdata.l2type_offset], DOT1X_LLCTYPE, 2) ==
-		    0 && (h->len >
-			capdata.l2type_offset + sizeof(struct wpa_eapol_key))) {
-			/* It's a dot1x frame, process it */
-			handle_dot1x(&cdata, &capdata);
-			if (cdata.aaset && cdata.spaset && cdata.snonceset &&
-			    cdata.anonceset && cdata.keymicset
-			    && cdata.eapolframeset) {
-				/* We've collected everything we need. */
-				break;
-			}
-		}
-	}
+        /* populates global *packet */
+        while (getpacket(&capdata) > 0) {
+            if (opt.verbose > 2) {
+                lamont_hdump(packet, h->len);
+            }
+            /* test packet for data that we are looking for */
+            if (memcmp(&packet[capdata.l2type_offset], DOT1X_LLCTYPE, 2) ==
+                0 && (h->len >
+                capdata.l2type_offset + sizeof(struct wpa_eapol_key))) {
+                /* It's a dot1x frame, process it */
+                handle_dot1x(&cdata, &capdata, &opt);
+                if (cdata.aaset && cdata.spaset && cdata.snonceset &&
+                    cdata.anonceset && cdata.keymicset
+                    && cdata.eapolframeset) {
+                    /* We've collected everything we need. */
+                    break;
+                }
+            }
+        }
 
-	closepcap(&capdata);
+        closepcap(&capdata);
 
-	if (!(cdata.aaset && cdata.spaset && cdata.snonceset &&
-	      cdata.anonceset && cdata.keymicset && cdata.eapolframeset)) {
-		printf("End of pcap capture file, incomplete TKIP four-way "
-		       "exchange.  Try using a\ndifferent capture.\n");
-		exit(-1);
-	} else {
-		if (cdata.ver == WPA_KEY_INFO_TYPE_HMAC_SHA1_AES) {
-			printf("Collected all necessary data to mount crack"
-			       		" against WPA2/PSK passphrase.\n");
-		 } else if (cdata.ver == WPA_KEY_INFO_TYPE_HMAC_MD5_RC4) {
-			printf("Collected all necessary data to mount crack"
-			       		" against WPA/PSK passphrase.\n");
-		}
-	}
+        if (!(cdata.aaset && cdata.spaset && cdata.snonceset &&
+              cdata.anonceset && cdata.keymicset && cdata.eapolframeset)) {
+            printf("End of pcap capture file, incomplete four-way handshake "
+                   "exchange.  Try using a\ndifferent capture.\n");
+            exit(-1);
+        } else {
+            if (cdata.ver == WPA_KEY_INFO_TYPE_HMAC_SHA1_AES) {
+                printf("Collected all necessary data to mount crack"
+                            " against WPA2/PSK passphrase.\n");
+             } else if (cdata.ver == WPA_KEY_INFO_TYPE_HMAC_MD5_RC4) {
+                printf("Collected all necessary data to mount crack"
+                            " against WPA/PSK passphrase.\n");
+            }
+        }
 
-	if (opt.verbose > 1) {
-		dump_all_fields(cdata);
-	}
+        if (opt.verbose > 1) {
+            dump_all_fields(cdata, &opt);
+        }
+
+        if (opt.checkonly) {
+            /* Don't attack the PSK, just return non-error return code */
+            return 0;
+        }
 
 	/* Zero mic and length data for hmac-md5 calculation */
 	eapkeypacket =
 	    (struct wpa_eapol_key *)&cdata.eapolframe[EAPDOT1XOFFSET];
 	memset(&eapkeypacket->key_mic, 0, sizeof(eapkeypacket->key_mic));
-	eapkeypacket->key_data_length = 0;
+	if (opt.nonstrict == 0) {
+		eapkeypacket->key_data_length = 0;
+	}
 
 	printf("Starting dictionary attack.  Please be patient.\n");
 	fflush(stdout);

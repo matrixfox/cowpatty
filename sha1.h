@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004-2005, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: sha1.h,v 4.1 2008/03/20 16:49:38 jwright Exp $
+ * $Id: sha1.h,v 4.1 2008-03-20 16:49:38 jwright Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -43,8 +43,12 @@
 #define NOCACHED 0
 
 typedef struct {
+	SHA1_CTX k_ipad;
+	SHA1_CTX k_opad;
+    /*
 	unsigned char k_ipad[65];
 	unsigned char k_opad[65];
+    */
 	unsigned char k_ipad_set;
 	unsigned char k_opad_set;
 } SHA1_CACHE;
