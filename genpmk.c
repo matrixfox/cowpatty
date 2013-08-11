@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2005, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: genpmk.c,v 4.1 2008/03/20 16:49:38 jwright Exp $
+ * $Id: genpmk.c,v 4.1 2008-03-20 16:49:38 jwright Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -33,7 +33,7 @@
 #include "sha1.h"
 
 #define PROGNAME "genpmk"
-#define VER "1.0"
+#define VER "1.1"
 
 /* Globals */
 int sig = 0;			/* Used for handling signals */
@@ -129,7 +129,7 @@ int main(int argc, char **argv)
 			opt.verbose++;
 			break;
 		case 'V':
-			printf("$Id: genpmk.c,v 4.1 2008/03/20 16:49:38 jwright Exp $\n");
+			printf("$Id: genpmk.c,v 4.1 2008-03-20 16:49:38 jwright Exp $\n");
 			exit(0);
 		}
 	}
@@ -201,7 +201,10 @@ int main(int argc, char **argv)
 			exit(-1);
 		}
 
-		fclose(fpout);
+		if (fclose(fpout) != 0) {
+            perror("fclose");
+            exit(-1);
+        }
 
 		if (memcmp(opt.ssid, hf_header.ssid, hf_header.ssidlen) != 0) {
 			fprintf(stderr, "Specified SSID \"%s\" and the SSID in "
@@ -212,8 +215,7 @@ int main(int argc, char **argv)
 		}
 		
 		printf("File %s exists, appending new data.\n", opt.hashfile);
-		fopen(opt.hashfile, "ab");
-		if (fopen == NULL) {
+		if (fopen(opt.hashfile, "ab") == NULL) {
 			perror("fopen");
 			exit(-1);
 		}
@@ -244,8 +246,8 @@ int main(int argc, char **argv)
 		 */
 		if (fret < 8 || fret > 63) {
 			if (opt.verbose) {
-				printf("Invalid passphrase length: %s (%d).\n",
-				       passphrase, (int)strlen(passphrase));
+				printf("Invalid passphrase length: %s (%u).\n",
+				       passphrase, strlen(passphrase));
 			}
 			continue;
 		} else {
@@ -275,14 +277,29 @@ int main(int argc, char **argv)
 			sizeof(rec.pmk));
 
 		/* Write the record contents to the file */
-		fwrite(&rec.rec_size, sizeof(rec.rec_size), 1, fpout);
-		fwrite(passphrase, strlen(passphrase), 1, fpout);
-		fwrite(rec.pmk, sizeof(rec.pmk), 1, fpout);
+		if (fwrite(&rec.rec_size, sizeof(rec.rec_size), 1, fpout) != 1) {
+            perror("fwrite");
+            break;
+        }
+		if (fwrite(passphrase, strlen(passphrase), 1, fpout) != 1) {
+            perror("fwrite");
+            break;
+        }
+		if (fwrite(rec.pmk, sizeof(rec.pmk), 1, fpout) != 1) {
+            perror("fwrite");
+            break;
+        }
 
 	}
 
-	fclose(fpin);
-	fclose(fpout);
+	if (fclose(fpin) != 0) {
+        perror("fclose");
+        exit(-1);
+    }
+	if (fclose(fpout) != 0) {
+        perror("fclose");
+        exit(-1);
+    }
 
 	gettimeofday(&end, 0);
 

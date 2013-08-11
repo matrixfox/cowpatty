@@ -1,3 +1,8 @@
+Jul  3 2009  Compatibility with modern gcc, fixed buffer overflow due to growth
+             of OpenSSL SHA1_CTX variable from 64 to 96 bytes.
+Jun  4 2009  Lots of cool stuff including reading hashfiles from stdin,
+             new liberal handling for 4-way handshake data, -2 option, fixed
+             NULL deref when dealing with radiotap packet capture headers.
 Mar 20 2008  New support for OSX and FreeBSD systems; thanks to Dennis
              Herrmann for the FreeBSD patch.  Added "make install" support
 	     with patch from Thomas d'Otreppe.  Made OpenSSL mandatory for

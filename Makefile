@@ -45,7 +45,4 @@ strip:
 
 install: all
 	install -d $(DESTDIR)$(BINDIR)
-	install -m 755 $(PROG) $(BINDIR)$(DESTDIR)
-
-love:
-	@echo "Not right now, I have a headache."
+	install -m 755 $(PROG) $(DESTDIR)$(BINDIR)

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004-2005, Joshua Wright <jwright@hasborg.com>
  *
- * $Id: cowpatty.h,v 4.2 2008/03/20 16:49:38 jwright Exp $
+ * $Id: cowpatty.h,v 4.3 2008-11-12 14:22:27 jwright Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -94,7 +94,7 @@ struct ieee8021x {
 	u16 length;
 } __attribute__ ((packed));
 
-#define MAXPASSLEN 63
+#define MAXPASSLEN 64
 #define MEMORY_DICT 0
 #define STDIN_DICT 1
 #define EAPDOT1XOFFSET 4
@@ -149,7 +149,10 @@ struct user_opt {
 	char dictfile[256];
 	char pcapfile[256];
 	char hashfile[256];
-	int verbose;
+	u8 nonstrict;
+    u8 checkonly;
+	u8 verbose;
+    u8 unused;
 };
 
 struct capture_data {
@@ -166,7 +169,8 @@ struct crack_data {
 	u8 spa[6];
 	u8 snonce[32];
 	u8 anonce[32];
-	u8 eapolframe[99];	/* Length the same for all packets? */
+	u8 eapolframe[99];
+	u8 eapolframe2[125];
 	u8 keymic[16];
 	u8 aaset;
 	u8 spaset;
@@ -177,6 +181,7 @@ struct crack_data {
 	u8 replay_counter[8];
 
 	int ver; /* Hashing algo, MD5 or AES-CBC-MAC */
+	int eapolframe_size;
 };
 
 struct hashdb_head {
