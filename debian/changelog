@@ -1,3 +1,10 @@
+cowpatty (4.6-1kali3) kali-dev; urgency=medium
+
+  * Do not hardcode dependency on C libraries.
+  * Modernise the packaging.
+
+ -- Raphaël Hertzog <hertzog@debian.org>  Tue, 24 Nov 2015 18:30:15 +0100
+
 cowpatty (4.6-1kali2) kali; urgency=low
 
   * Added watch file (Closes: 0000886)
